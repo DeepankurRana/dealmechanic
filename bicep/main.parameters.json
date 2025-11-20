@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "numericSuffix": {
+      "value": "02"
+   },
+    "location": {
+      "value": "uksouth"
+    },
+     "networkResourceGroupName": {
+       "value": "DealMechanic_IaC_Networking_v1"
+    },
+     "organizationName": {
+      "value": "data"
+    },
+    "workloadName": {
+      "value": "dm"
+    },
+    "environment": {
+      "value": "dev"
+    },
+    "azureADSqlAdminPrincipalType": {
+      "value": "Group"
+    },
+    "azureADSqlAdminLoginName": {
+      "value": "Az sql-uks-mc-dm-dev Server Administrators"
+    },
+    "azureADSqlAdminSid": {
+      "value": "928796f9-ef77-41c4-ab5e-9fe327767268"
+    },
+    "sqlAdministratorLogin": {
+      "value": "dmsqlserveradmin"
+    },
+    "sqlAdministratorLoginPassword":{
+      "value": "<Strong Password>"
+    },
+    "databaseName":{
+      "value": "sqldb-dm-poc"
+    },
+    "acrName": { 
+      "value": "cruksdatadmdev03" 
+      },
+    "createRedisResource":{
+      "value": true
+    },
+    "logAnalyticsWSName":{
+      "value": "DealMechanic_IaC_v1_logAnalyticsWS"
+    },
+    "logAnalyticsWSRGName":{
+      "value": "DealMechanic_IaC_v1"
+    }
+  }
+}
