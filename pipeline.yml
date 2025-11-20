@@ -1,0 +1,23 @@
+# trigger:
+#   branches:
+#     include:
+#       - main
+
+trigger: none
+
+variables:
+  dockerServiceConnection: 'DealMechanic IaC Docker Registry Service Connection - Test Tenant - v1'
+  armServiceConnection: 'DealMechanic IaC Service Principal - Test Tenant - v1'
+  resourceGroup: 'DealMechanic_IaC_v1'
+  location: 'uksouth'
+  acrName: 'cruksdatadmdev02'
+  containerAppsEnvironmentName: 'cae-uks-data-dm-dev-02'
+  containerAppName: 'ca-uks-data-dm-dev-02-webntools'
+  imageRepository: 'webnettools'
+  imageTag: 'latest'
+  acrLoginServer: '$(acrName).azurecr.io'
+  dockerServicePrincipalObjectId: '805ff05b-445f-435e-b422-24c3516412c9'
+
+steps:
+  - template: pipelines/build-deploy-new.yml
+

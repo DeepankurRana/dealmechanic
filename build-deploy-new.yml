@@ -1,0 +1,65 @@
+steps:
+  - task: AzureCLI@2
+    displayName: "Set Container App Registry using Managed Identity"
+    inputs:
+      azureSubscription: $(armServiceConnection)
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        echo "Setting Container App registry for $(containerAppName)..."
+        az containerapp registry set \
+          --name $(containerAppName) \
+          --resource-group $(resourceGroup) \
+          --server $(acrName) \
+          --identity "/subscriptions/$(subscription)/resourcegroups/$(resourceGroup)/providers/microsoft.managedidentity/userassignedidentities/ident-uks-data-dm-dev-02"
+        echo "Waiting for operation to complete..."
+        sleep 10
+        echo "Registry set successfully."
+
+  - task: Docker@2
+    displayName: Build container image
+    inputs:
+      containerRegistry: $(dockerServiceConnection)
+      repository: $(imageRepository)
+      command: build
+      dockerfile: src-webnettools/Dockerfile
+      buildContext: src-webnettools
+      tags: |
+        $(imageTag)
+
+  - task: Docker@2
+    displayName: Push container image
+    inputs:
+      containerRegistry: $(dockerServiceConnection)
+      repository: $(imageRepository)
+      command: push
+      tags: |
+        $(imageTag)
+
+  # Commented out - using Docker@2 task with service connection instead
+  # - task: AzureCLI@2
+  #   displayName: Tag and push container image
+  #   inputs:
+  #     azureSubscription: $(armServiceConnection)
+  #     scriptType: pscore
+  #     scriptLocation: inlineScript
+  #     inlineScript: |
+  #       $imageName = "$(acrLoginServer)/$(imageRepository):$(imageTag)"
+  #       docker tag $(imageRepository):$(imageTag) $imageName
+  #       docker push $imageName
+
+  - task: AzureContainerApps@0
+    displayName: Deploy container app revision
+    inputs:
+      azureSubscription: $(armServiceConnection)
+      appName: $(containerAppName)
+      containerAppName: $(containerAppName)
+      resourceGroup: $(resourceGroup)
+      containerAppEnvironment: $(containerAppsEnvironmentName)
+      containerAppEnvironmentResourceGroup: $(resourceGroup)
+      location: $(location)
+      imageToDeploy: $(acrLoginServer)/$(imageRepository):$(imageTag)
+      registryLoginServer: $(acrLoginServer)
+      registryUsername: $(acrUsername)
+      registryPassword: $(acrPassword)
+

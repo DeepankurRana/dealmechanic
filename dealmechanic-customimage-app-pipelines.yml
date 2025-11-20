@@ -1,0 +1,148 @@
+# ============================================================
+# Azure DevOps Pipeline: Build and Deploy Container App
+# ============================================================
+
+trigger:
+  - main
+
+resources:
+  - repo: self
+
+# ------------------------------------------------------------
+# Runtime Parameters
+# ------------------------------------------------------------
+parameters:
+  - name: registryName
+    displayName: 'Azure Container Registry Name (short name)'
+    type: string
+    default: 'cruksdatadmdev02'
+
+  - name: containerRegistry
+    displayName: 'Azure Container Registry FQDN (e.g. myacr.azurecr.io)'
+    type: string
+    default: 'cruksdatadmdev02.azurecr.io'
+
+  - name: containerAppName
+    displayName: 'Container App Name'
+    type: string
+    default: 'ca-uks-data-dm-dev-02-webntools'
+
+  - name: resourceGroupName
+    displayName: 'Resource Group Name'
+    type: string
+    default: 'DealMechanic_IaC_v1'
+
+  - name: imageRepository
+    displayName: 'Image Repository Name'
+    type: string
+    default: 'dealroom-companies-iac'
+
+  - name: imageTag
+    displayName: 'Image Tag (e.g. latest, 1.0.0)'
+    type: string
+    default: 'latest'
+
+# ------------------------------------------------------------
+# Static Variables
+# ------------------------------------------------------------
+variables:
+  vmImageName: 'ubuntu-latest'
+  dockerRegistryServiceConnection: 'DealMechanic IaC Docker Registry Service Connection - Test Tenant - v1' ## need to be replaced
+  azureServiceConnection: 'DealMechanic IaC Service Principal - Test Tenant - v1' ## need to be replaced
+  subscription: '34fa07c2-8084-4baf-bb39-359547158d5e'
+  dockerfilePath: '$(Build.SourcesDirectory)/docker/dockerfile'
+  fullImageName: '${{ parameters.containerRegistry }}/${{ parameters.imageRepository }}:${{ parameters.imageTag }}'
+
+# ------------------------------------------------------------
+# Stage 1: Build and Push Docker Image
+# ------------------------------------------------------------
+stages:
+- stage: Build
+  displayName: "Build and Push Docker Image"
+  jobs:
+    - job: BuildImage
+      displayName: "Build and Push Image to Azure Container Registry"
+      pool:
+        vmImage: $(vmImageName)
+
+      steps:
+        - checkout: self
+
+        - task: Docker@2
+          displayName: "Build and Push Docker Image"
+          inputs:
+            command: buildAndPush
+            repository: ${{ parameters.imageRepository }}
+            dockerfile: $(dockerfilePath)
+            containerRegistry: $(dockerRegistryServiceConnection)
+            tags: |
+              ${{ parameters.imageTag }}
+
+        - script: |
+            echo "Docker Image successfully built and pushed:"
+            echo "Image: ${{ parameters.containerRegistry }}/${{ parameters.imageRepository }}:${{ parameters.imageTag }}"
+          displayName: "Verify Image Build Output"
+
+# ------------------------------------------------------------
+# Stage 2: Set Container App Registry
+# ------------------------------------------------------------
+- stage: SetRegistry
+  displayName: "Set Container App Registry Identity"
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+    - job: ConfigureRegistry
+      displayName: "Configure Container App Registry"
+      pool:
+        vmImage: $(vmImageName)
+      steps:
+        - task: AzureCLI@2
+          displayName: "Set Container App Registry using Managed Identity"
+          inputs:
+            azureSubscription: $(azureServiceConnection)
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              echo "Setting Container App registry for ${{ parameters.containerAppName }}..."
+              az containerapp registry set \
+                --name ${{ parameters.containerAppName }} \
+                --resource-group ${{ parameters.resourceGroupName }} \
+                --server ${{ parameters.containerRegistry }} \
+                --identity "/subscriptions/$(subscription)/resourcegroups/${{ parameters.resourceGroupName }}/providers/microsoft.managedidentity/userassignedidentities/ident-uks-data-dm-dev-02"
+              
+              echo "Waiting for operation to complete..."
+              sleep 10
+              echo "Registry set successfully."
+
+# ------------------------------------------------------------
+# Stage 3: Deploy Container App
+# ------------------------------------------------------------
+- stage: Deploy
+  displayName: "Deploy Updated Container App Image"
+  dependsOn: SetRegistry
+  condition: succeeded()
+  jobs:
+    - job: DeployContainerApp
+      displayName: "Deploy Image to Azure Container App"
+      pool:
+        vmImage: $(vmImageName)
+      variables:
+        fullImageName: '${{ parameters.containerRegistry }}/${{ parameters.imageRepository }}:${{ parameters.imageTag }}'
+      steps:
+        - checkout: none
+
+        - script: |
+            echo "Deploying image: $(fullImageName)"
+            echo "Target Container App: ${{ parameters.containerAppName }}"
+            echo "Resource Group: ${{ parameters.resourceGroupName }}"
+          displayName: "Print Deployment Details"
+
+        - task: AzureContainerApps@1
+          displayName: "Deploy Image to Azure Container App"
+          inputs:
+            azureSubscription: $(azureServiceConnection)
+            acrName: ${{ parameters.registryName }}
+            containerAppName: ${{ parameters.containerAppName }}
+            resourceGroup: ${{ parameters.resourceGroupName }}
+            imageToDeploy: $(fullImageName)
+            useManagedIdentityCreds: true

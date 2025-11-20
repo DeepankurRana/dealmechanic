@@ -1,0 +1,178 @@
+trigger:
+  - none
+
+name: Deploy DealMechanic IaC on [${{ parameters.deploymentEnv }}] env1
+
+parameters:
+- name: deploymentEnv
+  displayName: 'Select a deployment environment:'
+  type: string
+  default: dev
+  values:
+  - dev
+  - uat
+  - prod
+  - v1
+- name: numericSuffix
+  displayName: 'Number suffix for resource naming convention:'
+  type: string
+  default: '02'
+
+variables:
+  vmImageName: 'ubuntu-latest'
+  templateFile: './bicep/main.bicep'
+  parameterFile: './bicep/main.parameters.json'
+  organizationName: 'data'
+  workloadName: 'dm'
+  databaseName: 'sqldb-DealMechanic'
+  deploymentEnv: ${{ parameters.deploymentEnv }}
+  numericSuffix: ${{ parameters.numericSuffix }}
+
+  ${{ if eq(parameters.deploymentEnv, 'dev') }} :
+    azureServiceConnection: "DealMechanic IaC Service Principal - Test Tenant - v1" 
+    resourceGroupName: 'DealMechanic_IaC_v1'
+    networkResourceGroupName: 'DealMechanic_IaC_Networking_v1'
+    location: 'uksouth'
+    logAnalyticsWSName: ''
+    logAnalyticsWSRGName: 'DealMechanic_IaC_v1'
+  ${{ elseif eq(parameters.deploymentEnv, 'uat') }}:
+    azureServiceConnection: "!!! Not Allowed DealMechanic IC for UAT"
+    resourceGroupName: 'DealMechanic_IaC_UAT_Workload'
+    networkResourceGroupName: 'DealMechanic_IaC_UAT_Networking'
+    location: 'uksouth'
+    logAnalyticsWSName: 'LAW-Production'
+    logAnalyticsWSRGName: 'LAW-Test-RG'
+  ${{ elseif eq(parameters.deploymentEnv, 'prod') }}:
+    azureServiceConnection: "!!! Not Allowed DealMechanic IC for Production"
+    resourceGroupName: 'DealMechanic_IaC_PROD_Workload'
+    networkResourceGroupName: 'DealMechanic_IaC_PROD_Networking'
+    location: 'uksouth'
+    logAnalyticsWSName: 'LAW-Production'
+    logAnalyticsWSRGName: 'LAW-Test-RG'
+  ${{ elseif eq(parameters.deploymentEnv, 'v1') }}:
+    azureServiceConnection: "!!! Not Allowed DealMechanic IC for v1"
+    resourceGroupName: 'DealMechanic_IaC_V1_Workload'
+    networkResourceGroupName: 'DealMechanic_IaC_V1_Networking'
+    location: 'uksouth'
+    logAnalyticsWSName: 'LAW-Production'
+    logAnalyticsWSRGName: 'LAW-Test-RG'
+
+pool:
+  vmImage: $(vmImageName)
+
+stages:
+- stage: Lint
+  jobs:
+  - job: Lint
+    displayName: Lint bicep files
+    steps:
+    - script: echo "Linting with params env ${{ parameters.deploymentEnv }} | local var $(deploymentEnv) | svc conn $(azureServiceConnection) | workload RG $(workloadResourceGroupName) | network RG $(networkResourceGroupName) | location $(location)"
+    - checkout: self
+    - task: Bash@3
+      displayName: Perform linting
+      inputs:
+        targetType: 'inline'
+        script: |
+          set -e
+          echo "Linting bicep files"
+          az bicep build --file '$(templateFile)'
+
+- stage: Validate
+  displayName: Validate IaC on [${{ parameters.deploymentEnv }}] env
+  variables:
+    - group: 'dealmechanic-iac-${{ parameters.deploymentEnv }}-variable-group'
+  dependsOn: Lint
+  condition: succeeded()
+  jobs:
+  - job: ValidateBicepTemplate
+    displayName: Validate bicep deployment
+    steps:
+    - task: AzureResourceManagerTemplateDeployment@3
+      displayName: Perform deployment validation
+      inputs:
+        deploymentScope: 'Resource Group'
+        azureResourceManagerConnection: '$(azureServiceConnection)'
+        resourceGroupName: '$(resourceGroupName)'
+        action: Create Or Update Resource Group
+        location: '$(location)'
+        templateLocation: 'Linked artifact'
+        csmFile: '$(templateFile)'
+        csmParametersFile: '$(parameterFile)'
+        deploymentMode: 'Validation'
+
+    
+    - task: AzureCLI@2
+      displayName: 'Ensure Networking Resource Group Exists'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+           az group show --name $(networkResourceGroupName) --output none || \
+           az group create --name $(networkResourceGroupName) --location $(location) --output none
+
+    
+
+- stage: PreviewWhatIF
+  displayName: PreviewWhatIF IaC on [${{ parameters.deploymentEnv }}] env
+  variables:
+    - group: 'dealmechanic-iac-${{ parameters.deploymentEnv }}-variable-group'
+  dependsOn: Validate
+  condition: succeeded()
+  jobs:
+  - job: PreviewChanges
+    displayName: PreviewWhatIF deployment changes
+    steps:
+    - task: AzureCLI@2
+      displayName: Perform Bicep what-if
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az deployment group what-if \
+            --template-file '$(templateFile)' \
+            --parameters '$(parameterFile)' \
+            --parameters location='$(location)' organizationName='$(organizationName)' workloadName='$(workloadName)' environment='$(deploymentEnv)' azureADSqlAdminLoginName='$(azureADSqlAdminLoginName)' azureADSqlAdminPrincipalType='$(azureADSqlAdminPrincipalType)' azureADSqlAdminSid='$(azureADSqlAdminSid)' sqlAdministratorLogin='$(sqlAdministratorLogin)' sqlAdministratorLoginPassword='$(sqlAdministratorLoginPassword)' databaseName='$(databaseName)' logAnalyticsWSName='$(logAnalyticsWSName)' logAnalyticsWSRGName='$(logAnalyticsWSRGName)' \
+            --resource-group '$(resourceGroupName)'
+
+- stage: Deploy
+  jobs:
+  - deployment: Deploy
+    environment: DealMechanic-iac-${{ parameters.deploymentEnv }}-env1
+    displayName: 'Deploy to Azure on [${{ parameters.deploymentEnv }}] env'
+    variables:
+      - group: 'dealmechanic-iac-${{ parameters.deploymentEnv }}-variable-group'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: AzureResourceManagerTemplateDeployment@3
+            displayName: Deploy Bicep Template to Azure
+            inputs:
+              deploymentScope: 'Resource Group'
+              azureResourceManagerConnection: '$(azureServiceConnection)'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: '$(resourceGroupName)'
+              location: '$(location)'
+              templateLocation: 'Linked artifact'
+              csmFile: '$(templateFile)'
+              csmParametersFile: '$(parameterFile)'
+              overrideParameters: >
+                -location "$(location)"
+                -organizationName "$(organizationName)"
+                -workloadName "$(workloadName)"
+                -environment "$(deploymentEnv)"
+                -azureADSqlAdminLoginName "$(azureADSqlAdminLoginName)"
+                -azureADSqlAdminPrincipalType "$(azureADSqlAdminPrincipalType)"
+                -azureADSqlAdminSid "$(azureADSqlAdminSid)"
+                -sqlAdministratorLogin "$(sqlAdministratorLogin)"
+                -sqlAdministratorLoginPassword "$(sqlAdministratorLoginPassword)"
+                -databaseName "$(databaseName)"
+                -logAnalyticsWSName "$(logAnalyticsWSName)"
+                -logAnalyticsWSRGName "$(logAnalyticsWSRGName)"
+                -numericSuffix "$(numericSuffix)"
+                -networkResourceGroupName "$(networkResourceGroupName)"
+              deploymentMode: 'Incremental'
+              deploymentName: 'azdo-deploy-$(Build.BuildId)'
